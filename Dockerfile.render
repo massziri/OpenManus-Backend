@@ -1,45 +1,39 @@
-# Dockerfile optimized for Render deployment of OpenManus API
-# ============================================================
-# Differences vs upstream Dockerfile:
-#   - Installs Playwright + Chromium (required by browser-use tool)
-#   - Generates config.toml from env vars at container start
-#   - Runs FastAPI via uvicorn instead of the CLI
+# Lightweight Dockerfile optimized for Render free tier (512 MB RAM).
+# ====================================================================
+# Chromium is NOT installed here — the OpenManus browser tool connects
+# to a REMOTE Chromium hosted on browserless.io via CDP/WebSocket
+# (configured by entrypoint.sh from the BROWSERLESS_TOKEN env var).
+#
+# This keeps the image slim (~250 MB) and the running container well
+# under Render's 512 MB free-tier ceiling.
 
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/tmp/.playwright
 
 WORKDIR /app
 
-# --- system deps needed by Playwright chromium & general tooling ---
+# Minimal system deps: git + curl + certs. No Chromium libs — we connect remotely.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates \
-        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-        libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 \
-        libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
-        libcairo2 libasound2 libatspi2.0-0 libwayland-client0 \
     && rm -rf /var/lib/apt/lists/*
 
-# --- python deps ---
-COPY requirements.txt ./
+# Install python deps first for better layer caching.
+COPY requirements.render.txt ./
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install "uvicorn[standard]"
+    pip install -r requirements.render.txt
 
-# --- Playwright browser (chromium only, to save space) ---
-RUN python -m playwright install --with-deps chromium || \
-    python -m playwright install chromium
-
-# --- app code ---
+# App code.
 COPY . .
 
-# --- entrypoint that renders config.toml from env before starting server ---
+# Entrypoint renders config/config.toml from env vars, then starts uvicorn.
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

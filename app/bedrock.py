@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-import boto3
+# boto3 is imported lazily inside the client factory so the module can be
+# safely imported in environments that don't need AWS Bedrock (and therefore
+# don't want the ~30 MB boto3 dependency). See requirements.render.txt.
 
 
 # Global variables to track the current tool use ID across function calls
@@ -39,6 +41,13 @@ class BedrockClient:
     def __init__(self):
         # Initialize Bedrock client, you need to configure AWS env first
         try:
+            try:
+                import boto3  # noqa: WPS433 (lazy import by design)
+            except ImportError as exc:
+                raise ImportError(
+                    "AWS Bedrock support requires the 'boto3' package. "
+                    "Install it with: pip install boto3"
+                ) from exc
             self.client = boto3.client("bedrock-runtime")
             self.chat = Chat(self.client)
         except Exception as e:

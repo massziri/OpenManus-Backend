@@ -1,29 +1,36 @@
-# Render Blueprint for OpenManus API backend
-# --------------------------------------------
-# One-click deploy: from your GitHub repo on Render, click "New Blueprint" and
-# select this repo. Render will read this file and provision the service.
+# Render Blueprint for OpenManus API backend — FREE-TIER OPTIMIZED
+# =================================================================
+# This blueprint deploys a slim backend (~250 MB image) that stays under
+# Render's 512 MB free-tier RAM ceiling by connecting to a REMOTE Chromium
+# hosted on browserless.io (also free).
 #
-# ⚠️ Free tier notes:
-#   - Service sleeps after 15 min of inactivity (cold start ~30-60s).
-#   - 512 MB RAM ceiling — heavy Playwright browser tasks may hit this limit.
-#   - Consider upgrading to Starter ($7/mo) if you rely on browser automation.
+# One-click deploy: from your GitHub repo on Render, click "New Blueprint"
+# and select this repo. Render will read this file and provision the service.
+#
+# ⚠️ Free-tier notes:
+#   - Render service sleeps after 15 min of inactivity (cold start ~30-60s).
+#   - Browserless free tier gives ~6h/month of browser time (plenty for casual use).
 
 services:
   - type: web
     name: openmanus-api
     env: docker
     plan: free
-    region: frankfurt              # closest EU region; change if needed
+    region: frankfurt
     dockerfilePath: ./Dockerfile.render
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: API_KEY
-        generateValue: true         # Render will generate a random secret
+        generateValue: true
       - key: ALLOWED_ORIGINS
-        sync: false                 # set manually to your Vercel PWA URL
+        sync: false
       - key: OPENROUTER_API_KEY
-        sync: false                 # your OpenRouter key (secret)
+        sync: false
+      - key: BROWSERLESS_TOKEN
+        sync: false
+      - key: BROWSERLESS_HOST
+        value: "production-sfo.browserless.io"
       - key: OPENMANUS_MODEL
         value: "deepseek/deepseek-chat-v3.1:free"
       - key: REQUEST_TIMEOUT_S

@@ -1,0 +1,63 @@
+# Slimmed-down requirements for Render free tier (512 MB RAM).
+# =============================================================
+# Removed from upstream:
+#   - datasets (~200 MB, only for RL training, unused at runtime)
+#   - crawl4ai (~150 MB, uses local Chromium — we use remote instead)
+#   - gymnasium + browsergym (RL benchmark harness — unused at runtime)
+#   - boto3 (AWS Bedrock — lazy-imported, only loaded if Bedrock is used)
+#   - datasets is dropped (RL training only, unused at runtime)
+#   - huggingface-hub (used only by datasets)
+#   - pytest / pytest-asyncio (test-only)
+#   - numpy (transitive; auto-pulled if needed)
+#
+# Kept:
+#   - fastapi + uvicorn (API server)
+#   - openai (LLM client, works with OpenRouter)
+#   - browser-use + playwright (browser control, connects to REMOTE Chromium)
+#   - duckduckgo_search + googlesearch-python + baidusearch (web search)
+#   - loguru, tenacity, pydantic, pyyaml, tomli (core plumbing)
+#   - html2text, beautifulsoup4, requests (content extraction)
+#   - tiktoken (token counting)
+#   - mcp, aiofiles, colorama, unidiff, pillow (misc runtime deps)
+
+pydantic~=2.10.6
+pydantic_core~=2.27.2
+openai~=1.66.3
+tenacity~=9.0.0
+pyyaml~=6.0.2
+loguru~=0.7.3
+tiktoken~=0.9.0
+
+fastapi~=0.115.11
+uvicorn[standard]~=0.34.0
+
+html2text~=2024.2.26
+pillow~=11.1.0
+unidiff~=0.7.5
+
+browser-use~=0.1.40
+playwright~=1.51.0
+
+googlesearch-python~=1.3.0
+baidusearch~=1.0.3
+duckduckgo_search~=7.5.3
+
+aiofiles~=24.1.0
+colorama~=0.4.6
+
+mcp~=1.5.0
+httpx>=0.27.0
+tomli>=2.0.0
+
+# Imported unconditionally at module load time by OpenManus core:
+#   docker  — by app/sandbox/core/sandbox.py (used only when sandbox enabled)
+#   structlog — by app/utils/logger.py
+#   daytona   — by app/daytona/* (used only when daytona sandbox enabled)
+docker~=7.1.0
+structlog>=24.0.0
+daytona
+
+requests~=2.32.3
+beautifulsoup4~=4.13.3
+
+setuptools~=75.8.0
