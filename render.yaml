@@ -1,0 +1,34 @@
+# Render Blueprint for OpenManus API backend
+# --------------------------------------------
+# One-click deploy: from your GitHub repo on Render, click "New Blueprint" and
+# select this repo. Render will read this file and provision the service.
+#
+# ⚠️ Free tier notes:
+#   - Service sleeps after 15 min of inactivity (cold start ~30-60s).
+#   - 512 MB RAM ceiling — heavy Playwright browser tasks may hit this limit.
+#   - Consider upgrading to Starter ($7/mo) if you rely on browser automation.
+
+services:
+  - type: web
+    name: openmanus-api
+    env: docker
+    plan: free
+    region: frankfurt              # closest EU region; change if needed
+    dockerfilePath: ./Dockerfile.render
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: API_KEY
+        generateValue: true         # Render will generate a random secret
+      - key: ALLOWED_ORIGINS
+        sync: false                 # set manually to your Vercel PWA URL
+      - key: OPENROUTER_API_KEY
+        sync: false                 # your OpenRouter key (secret)
+      - key: OPENMANUS_MODEL
+        value: "deepseek/deepseek-chat-v3.1:free"
+      - key: REQUEST_TIMEOUT_S
+        value: "600"
+      - key: MAX_PROMPT_LEN
+        value: "8000"
+      - key: PYTHONUNBUFFERED
+        value: "1"
