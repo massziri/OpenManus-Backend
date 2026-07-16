@@ -35,8 +35,15 @@ services:
         sync: false
       - key: BROWSERLESS_HOST
         value: "production-sfo.browserless.io"
+      # Default OpenRouter model. Override in Environment tab if you prefer.
+      # Reliable free-tier options as of 2026-07:
+      #   openai/gpt-oss-20b:free              (default, small & responsive)
+      #   meta-llama/llama-3.3-70b-instruct:free  (better quality)
+      #   qwen/qwen3-next-80b-a3b-instruct:free   (strong general)
+      #   qwen/qwen3-coder:free                   (best for code)
+      # Any paid model works if you top up your OpenRouter credit.
       - key: OPENMANUS_MODEL
-        value: "deepseek/deepseek-chat-v3.1:free"
+        value: "openai/gpt-oss-20b:free"
       - key: REQUEST_TIMEOUT_S
         value: "600"
       - key: MAX_PROMPT_LEN

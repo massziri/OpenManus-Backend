@@ -12,7 +12,15 @@
 set -e
 
 CONFIG_PATH="/app/config/config.toml"
-MODEL="${OPENMANUS_MODEL:-deepseek/deepseek-chat-v3.1:free}"
+# Default to a currently-free OpenRouter model. As of 2026-07 the following are
+# reliably free-tier available:
+#   - openai/gpt-oss-20b:free            (default, cheapest to run, small)
+#   - meta-llama/llama-3.3-70b-instruct:free  (better quality, sometimes rate-limited)
+#   - qwen/qwen3-next-80b-a3b-instruct:free   (strong general model)
+#   - qwen/qwen3-coder:free              (best for code tasks)
+#   - nousresearch/hermes-3-llama-3.1-405b:free (largest, sometimes rate-limited)
+# Override by setting OPENMANUS_MODEL in the Render Environment tab.
+MODEL="${OPENMANUS_MODEL:-openai/gpt-oss-20b:free}"
 BASE_URL="${OPENMANUS_BASE_URL:-https://openrouter.ai/api/v1}"
 API_KEY="${OPENROUTER_API_KEY:-${OPENAI_API_KEY:-YOUR_API_KEY}}"
 
