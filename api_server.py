@@ -34,7 +34,11 @@ from app.logger import logger
 # --------------------------------------------------------------------------- #
 # Config
 # --------------------------------------------------------------------------- #
-API_KEY = os.getenv("API_KEY", "").strip()
+# Auth key can be provided under either name; USER_API_KEY takes priority.
+# This lets deployers dodge Render's Blueprint-managed API_KEY variable
+# (which is sometimes recreated at re-sync time) by defining USER_API_KEY
+# in the Environment tab and leaving API_KEY untouched.
+API_KEY = (os.getenv("USER_API_KEY") or os.getenv("API_KEY") or "").strip()
 ALLOWED_ORIGINS = [
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ]
@@ -70,10 +74,11 @@ class ChatRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _check_auth(x_api_key: Optional[str]) -> None:
+def _check_auth(x_api_key: Optional[str], query_key: Optional[str] = None) -> None:
     if not API_KEY:
-        return  # auth disabled
-    if not x_api_key or x_api_key != API_KEY:
+        return  # auth disabled (dev mode: no key configured on server)
+    provided = x_api_key or query_key
+    if not provided or provided != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key.")
 
 
@@ -181,8 +186,11 @@ async def debug_whoami(x_api_key: Optional[str] = Header(default=None)) -> JSONR
 
 
 @app.get("/api/config")
-async def get_config(x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
-    _check_auth(x_api_key)
+async def get_config(
+    x_api_key: Optional[str] = Header(default=None),
+    key: Optional[str] = None,  # optional ?key=... fallback
+) -> JSONResponse:
+    _check_auth(x_api_key, key)
     return JSONResponse(
         {
             "model": os.getenv("OPENMANUS_MODEL", "configured-in-toml"),
@@ -197,8 +205,9 @@ async def chat(
     req: ChatRequest,
     request: Request,
     x_api_key: Optional[str] = Header(default=None),
+    key: Optional[str] = None,  # optional ?key=... fallback (bypasses CORS preflight for headers)
 ):
-    _check_auth(x_api_key)
+    _check_auth(x_api_key, key)
 
     session_id = req.session_id or str(uuid.uuid4())
     prompt = req.prompt.strip()
