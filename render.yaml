@@ -21,8 +21,11 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      # API_KEY is user-managed via the Render dashboard (sync: false so
+      # manual edits stick and are not overwritten by Blueprint re-syncs).
+      # Set this yourself in Environment tab to any strong random string.
       - key: API_KEY
-        generateValue: true
+        sync: false
       - key: ALLOWED_ORIGINS
         sync: false
       - key: OPENROUTER_API_KEY
