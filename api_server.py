@@ -147,6 +147,39 @@ async def health() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+@app.get("/debug/whoami")
+async def debug_whoami(x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
+    """
+    Anonymous diagnostic endpoint. NEVER returns the actual API_KEY value;
+    only fingerprints (length, first char, last char, sha256 prefix) so the
+    caller can compare what they sent to what the server expects, without
+    exposing either secret.
+    """
+    import hashlib
+
+    def fp(s: Optional[str]) -> dict:
+        if not s:
+            return {"present": False, "len": 0}
+        digest = hashlib.sha256(s.encode("utf-8", errors="replace")).hexdigest()[:12]
+        return {
+            "present": True,
+            "len": len(s),
+            "first": s[0],
+            "last": s[-1],
+            "sha256_prefix": digest,
+            "has_leading_space": s != s.lstrip(),
+            "has_trailing_space": s != s.rstrip(),
+        }
+
+    return JSONResponse(
+        {
+            "server_api_key": fp(API_KEY),
+            "received_api_key": fp(x_api_key),
+            "match": bool(API_KEY and x_api_key and API_KEY == x_api_key),
+        }
+    )
+
+
 @app.get("/api/config")
 async def get_config(x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
     _check_auth(x_api_key)
