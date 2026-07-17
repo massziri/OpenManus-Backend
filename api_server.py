@@ -52,7 +52,7 @@ REQUEST_TIMEOUT_S = int(os.getenv("REQUEST_TIMEOUT_S", "600"))
 # --------------------------------------------------------------------------- #
 app = FastAPI(
     title="OpenManus API",
-    version="1.0.0",
+    version="1.1.0",
     description="HTTP wrapper around the OpenManus agent framework.",
 )
 
@@ -99,12 +99,47 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
-def _has_vision_config() -> bool:
-    return bool(
-        os.getenv("VISION_API_KEY")
-        and os.getenv("VISION_BASE_URL")
-        and os.getenv("VISION_MODEL")
+def _first_nonempty(*values: Optional[str]) -> str:
+    for value in values:
+        if value and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _resolve_vision_config() -> dict[str, str]:
+    """
+    Resolve vision settings with safe fallbacks.
+
+    Priority order:
+      1) Explicit VISION_* environment variables
+      2) Main OpenManus LLM environment variables
+      3) OpenRouter/OpenAI legacy fallbacks for api_key only
+    """
+    api_key = _first_nonempty(
+        os.getenv("VISION_API_KEY"),
+        os.getenv("OPENAI_API_KEY"),
+        os.getenv("OPENROUTER_API_KEY"),
     )
+    base_url = _first_nonempty(
+        os.getenv("VISION_BASE_URL"),
+        os.getenv("OPENMANUS_BASE_URL"),
+        os.getenv("BASE_URL"),
+    )
+    model = _first_nonempty(
+        os.getenv("VISION_MODEL"),
+        os.getenv("OPENMANUS_MODEL"),
+        os.getenv("MODEL"),
+    )
+    return {
+        "api_key": api_key,
+        "base_url": base_url.rstrip("/"),
+        "model": model,
+    }
+
+
+def _has_vision_config() -> bool:
+    vision = _resolve_vision_config()
+    return bool(vision["api_key"] and vision["base_url"] and vision["model"])
 
 
 def _prepare_attachment_context(attachments: List[Attachment]) -> tuple[str, List[str]]:
@@ -129,11 +164,16 @@ def _prepare_attachment_context(attachments: List[Attachment]) -> tuple[str, Lis
 
 
 async def _vision_describe(prompt: str, image_urls: List[str]) -> str:
+    vision = _resolve_vision_config()
+    if not (vision["api_key"] and vision["base_url"] and vision["model"]):
+        raise ValueError(
+            "Image analysis is not configured. Set VISION_* variables or rely on OPENAI_API_KEY + OPENMANUS_BASE_URL + OPENMANUS_MODEL fallbacks."
+        )
+
     client = AsyncOpenAI(
-        api_key=os.getenv("VISION_API_KEY"),
-        base_url=os.getenv("VISION_BASE_URL"),
+        api_key=vision["api_key"],
+        base_url=vision["base_url"],
     )
-    model = os.getenv("VISION_MODEL")
     system_text = os.getenv(
         "VISION_SYSTEM_PROMPT",
         "Analyze the attached image carefully and answer in the user's language. Be factual and concise.",
@@ -143,7 +183,7 @@ async def _vision_describe(prompt: str, image_urls: List[str]) -> str:
         content.append({"type": "image_url", "image_url": {"url": image_url}})
 
     response = await client.chat.completions.create(
-        model=model,
+        model=vision["model"],
         messages=[
             {"role": "system", "content": system_text},
             {"role": "user", "content": content},
@@ -222,7 +262,7 @@ async def _run_agent_streaming(prompt: str, session_id: str, attachments: List[A
     try:
         if image_urls and not _has_vision_config():
             raise ValueError(
-                "Image analysis is not enabled on this backend yet. Text files work now, but images require a vision-capable provider configured in VISION_API_KEY / VISION_BASE_URL / VISION_MODEL."
+                "Image analysis is not enabled on this backend yet. Configure VISION_API_KEY / VISION_BASE_URL / VISION_MODEL, or set OPENAI_API_KEY + OPENMANUS_BASE_URL + OPENMANUS_MODEL so the automatic vision fallback can activate."
             )
 
         if image_urls and not _needs_full_agent(prompt):
@@ -315,7 +355,7 @@ async def root() -> JSONResponse:
     return JSONResponse(
         {
             "service": "OpenManus API",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "endpoints": ["/health", "/api/chat", "/api/config"],
             "auth_required": bool(API_KEY),
         }
@@ -366,14 +406,20 @@ async def get_config(
     key: Optional[str] = None,  # optional ?key=... fallback
 ) -> JSONResponse:
     _check_auth(x_api_key, key)
+    vision = _resolve_vision_config()
     return JSONResponse(
         {
-            "model": os.getenv("OPENMANUS_MODEL", "configured-in-toml"),
+            "model": os.getenv("OPENMANUS_MODEL", vision["model"] or "configured-in-toml"),
             "max_prompt_length": MAX_PROMPT_LEN,
             "request_timeout_s": REQUEST_TIMEOUT_S,
             "attachments": {
                 "text": True,
                 "image": _has_vision_config(),
+            },
+            "vision": {
+                "enabled": _has_vision_config(),
+                "provider": vision["base_url"] or None,
+                "model": vision["model"] or None,
             },
         }
     )

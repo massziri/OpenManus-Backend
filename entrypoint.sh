@@ -7,22 +7,24 @@
 #   2) LOCAL (fallback, requires Chromium inside the image — heavy)
 #      → only used when BROWSERLESS_TOKEN is empty AND ENABLE_LOCAL_BROWSER=1.
 #
-# See README.RENDER.md for details.
+# This version also mirrors the main LLM settings into VISION_* so image
+# analysis works out of the box with the same provider unless explicitly
+# overridden.
 
 set -e
 
 CONFIG_PATH="/app/config/config.toml"
-# Default to a currently-free OpenRouter model. As of 2026-07 the following are
-# reliably free-tier available:
-#   - openai/gpt-oss-20b:free            (default, cheapest to run, small)
-#   - meta-llama/llama-3.3-70b-instruct:free  (better quality, sometimes rate-limited)
-#   - qwen/qwen3-next-80b-a3b-instruct:free   (strong general model)
-#   - qwen/qwen3-coder:free              (best for code tasks)
-#   - nousresearch/hermes-3-llama-3.1-405b:free (largest, sometimes rate-limited)
-# Override by setting OPENMANUS_MODEL in the Render Environment tab.
-MODEL="${OPENMANUS_MODEL:-openai/gpt-oss-20b:free}"
-BASE_URL="${OPENMANUS_BASE_URL:-https://openrouter.ai/api/v1}"
-API_KEY="${OPENROUTER_API_KEY:-${OPENAI_API_KEY:-YOUR_API_KEY}}"
+
+# Default to a free OpenAI-compatible provider with multimodal support.
+MODEL="${OPENMANUS_MODEL:-auto:free}"
+BASE_URL="${OPENMANUS_BASE_URL:-https://bazaarlink.ai/api/v1}"
+API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY:-YOUR_API_KEY}}"
+
+# Vision defaults: explicit VISION_* wins; otherwise inherit main LLM config.
+VISION_MODEL="${VISION_MODEL:-${OPENMANUS_MODEL:-$MODEL}}"
+VISION_BASE_URL="${VISION_BASE_URL:-${OPENMANUS_BASE_URL:-$BASE_URL}}"
+VISION_API_KEY="${VISION_API_KEY:-${OPENAI_API_KEY:-${OPENROUTER_API_KEY:-$API_KEY}}}"
+export VISION_MODEL VISION_BASE_URL VISION_API_KEY
 
 # ---- browser config ------------------------------------------------------- #
 BROWSER_SECTION=""
@@ -50,10 +52,6 @@ fi
 # ---- search engine config ------------------------------------------------- #
 SEARCH_SECTION=""
 if [ -n "${SERPER_API_KEY:-}" ]; then
-    # We route DuckDuckGo/Google traffic through Serper via an env var read by
-    # a monkey-patch in serper_search.py. Set the engine to "DuckDuckGo" as the
-    # primary (public HTML endpoint that doesn't require an API key), and keep
-    # Baidu/Bing as fallbacks — they're all rate-limited but redundant.
     SEARCH_SECTION=$(cat <<'SEARCH'
 [search]
 engine = "DuckDuckGo"
@@ -91,9 +89,9 @@ max_tokens = 8192
 temperature = 0.0
 
 [llm.vision]
-model = "${MODEL}"
-base_url = "${BASE_URL}"
-api_key = "${API_KEY}"
+model = "${VISION_MODEL}"
+base_url = "${VISION_BASE_URL}"
+api_key = "${VISION_API_KEY}"
 max_tokens = 8192
 temperature = 0.0
 
@@ -114,5 +112,5 @@ use_data_analysis_agent = false
 daytona_api_key = "not-used"
 EOF
 
-echo "[entrypoint] wrote ${CONFIG_PATH} (model=${MODEL})"
+echo "[entrypoint] wrote ${CONFIG_PATH} (model=${MODEL}, vision_model=${VISION_MODEL})"
 exec "$@"

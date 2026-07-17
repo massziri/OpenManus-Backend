@@ -6,10 +6,6 @@
 #
 # One-click deploy: from your GitHub repo on Render, click "New Blueprint"
 # and select this repo. Render will read this file and provision the service.
-#
-# ⚠️ Free-tier notes:
-#   - Render service sleeps after 15 min of inactivity (cold start ~30-60s).
-#   - Browserless free tier gives ~6h/month of browser time (plenty for casual use).
 
 services:
   - type: web
@@ -21,13 +17,11 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      # Auth key: set USER_API_KEY in the Environment tab.
-      # API_KEY is intentionally not declared here so Render Blueprint
-      # sync never touches it. USER_API_KEY is preferred by the server
-      # code and reads cleanly through the dashboard.
       - key: USER_API_KEY
         sync: false
       - key: ALLOWED_ORIGINS
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
@@ -35,15 +29,10 @@ services:
         sync: false
       - key: BROWSERLESS_HOST
         value: "production-sfo.browserless.io"
-      # Default OpenRouter model. Override in Environment tab if you prefer.
-      # Reliable free-tier options as of 2026-07:
-      #   openai/gpt-oss-20b:free              (default, small & responsive)
-      #   meta-llama/llama-3.3-70b-instruct:free  (better quality)
-      #   qwen/qwen3-next-80b-a3b-instruct:free   (strong general)
-      #   qwen/qwen3-coder:free                   (best for code)
-      # Any paid model works if you top up your OpenRouter credit.
+      - key: OPENMANUS_BASE_URL
+        value: "https://bazaarlink.ai/api/v1"
       - key: OPENMANUS_MODEL
-        value: "openai/gpt-oss-20b:free"
+        value: "auto:free"
       - key: REQUEST_TIMEOUT_S
         value: "600"
       - key: MAX_PROMPT_LEN
