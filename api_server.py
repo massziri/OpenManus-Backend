@@ -21,9 +21,10 @@ import json
 import os
 import time
 import uuid
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
+from openai import AsyncOpenAI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -67,9 +68,19 @@ app.add_middleware(
 # --------------------------------------------------------------------------- #
 # Models
 # --------------------------------------------------------------------------- #
+class Attachment(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    mime_type: str = Field(..., min_length=1, max_length=120)
+    kind: Literal["image", "text"]
+    data_url: Optional[str] = None
+    text_content: Optional[str] = None
+    size: Optional[int] = None
+
+
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_LEN)
+    prompt: str = Field(default="", max_length=MAX_PROMPT_LEN)
     session_id: Optional[str] = Field(default=None, description="Optional client-side session id")
+    attachments: List[Attachment] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,6 +97,62 @@ def _check_auth(x_api_key: Optional[str], query_key: Optional[str] = None) -> No
 def _sse(event: str, data: dict) -> bytes:
     """Format a Server-Sent-Event line."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+def _has_vision_config() -> bool:
+    return bool(
+        os.getenv("VISION_API_KEY")
+        and os.getenv("VISION_BASE_URL")
+        and os.getenv("VISION_MODEL")
+    )
+
+
+def _prepare_attachment_context(attachments: List[Attachment]) -> tuple[str, List[str]]:
+    text_blocks: list[str] = []
+    image_urls: list[str] = []
+
+    for attachment in attachments:
+        if attachment.kind == "text" and attachment.text_content:
+            body = attachment.text_content.strip()
+            if not body:
+                continue
+            truncated = body[:20000]
+            suffix = "\n[truncated]" if len(body) > len(truncated) else ""
+            text_blocks.append(
+                f"Attached file: {attachment.name} ({attachment.mime_type})\n```\n{truncated}{suffix}\n```"
+            )
+        elif attachment.kind == "image" and attachment.data_url:
+            image_urls.append(attachment.data_url)
+
+    merged_text = "\n\n".join(text_blocks)
+    return merged_text, image_urls
+
+
+async def _vision_describe(prompt: str, image_urls: List[str]) -> str:
+    client = AsyncOpenAI(
+        api_key=os.getenv("VISION_API_KEY"),
+        base_url=os.getenv("VISION_BASE_URL"),
+    )
+    model = os.getenv("VISION_MODEL")
+    system_text = os.getenv(
+        "VISION_SYSTEM_PROMPT",
+        "Analyze the attached image carefully and answer in the user's language. Be factual and concise.",
+    )
+    content = [{"type": "text", "text": prompt}]
+    for image_url in image_urls[:3]:
+        content.append({"type": "image_url", "image_url": {"url": image_url}})
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": content},
+        ],
+        max_tokens=1200,
+    )
+    if not response.choices or not response.choices[0].message.content:
+        raise ValueError("Empty response from vision model")
+    return response.choices[0].message.content
 
 
 def _needs_full_agent(prompt: str) -> bool:
@@ -124,7 +191,7 @@ def _needs_full_agent(prompt: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-async def _run_agent_streaming(prompt: str, session_id: str) -> AsyncGenerator[bytes, None]:
+async def _run_agent_streaming(prompt: str, session_id: str, attachments: List[Attachment]) -> AsyncGenerator[bytes, None]:
     """
     Runs the OpenManus agent for a given prompt and yields SSE-formatted chunks.
 
@@ -134,16 +201,42 @@ async def _run_agent_streaming(prompt: str, session_id: str) -> AsyncGenerator[b
     extended without frontend changes.
     """
     started = time.time()
-    yield _sse("start", {"session_id": session_id, "prompt": prompt})
+    text_context, image_urls = _prepare_attachment_context(attachments)
+    yield _sse(
+        "start",
+        {
+            "session_id": session_id,
+            "prompt": prompt,
+            "attachments": [
+                {"name": a.name, "kind": a.kind, "mime_type": a.mime_type}
+                for a in attachments
+            ],
+        },
+    )
+
+    effective_prompt = prompt.strip() or "Analyze the attached content and answer the user clearly."
+    if text_context:
+        effective_prompt = f"{effective_prompt}\n\n{text_context}"
 
     agent = None
     try:
-        if not _needs_full_agent(prompt):
+        if image_urls and not _has_vision_config():
+            raise ValueError(
+                "Image analysis is not enabled on this backend yet. Text files work now, but images require a vision-capable provider configured in VISION_API_KEY / VISION_BASE_URL / VISION_MODEL."
+            )
+
+        if image_urls and not _needs_full_agent(prompt):
+            yield _sse("status", {"message": "Analyzing attached image..."})
+            result = await asyncio.wait_for(
+                _vision_describe(effective_prompt, image_urls),
+                timeout=min(90, REQUEST_TIMEOUT_S),
+            )
+        elif not _needs_full_agent(prompt):
             yield _sse("status", {"message": "Direct answer mode..."})
             llm = LLM()
             result = await asyncio.wait_for(
                 llm.ask(
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": effective_prompt}],
                     system_msgs=[
                         {
                             "role": "system",
@@ -155,13 +248,25 @@ async def _run_agent_streaming(prompt: str, session_id: str) -> AsyncGenerator[b
                 timeout=min(90, REQUEST_TIMEOUT_S),
             )
         else:
+            agent_prompt = effective_prompt
+            if image_urls:
+                yield _sse("status", {"message": "Analyzing attached image before tool run..."})
+                image_summary = await asyncio.wait_for(
+                    _vision_describe(
+                        "Summarize the attached image so another text-only agent can use it. Focus on the user's goal if stated: " + (prompt or "analyze the image"),
+                        image_urls,
+                    ),
+                    timeout=min(90, REQUEST_TIMEOUT_S),
+                )
+                agent_prompt += f"\n\nAttached image analysis:\n{image_summary}"
+
             agent = await Manus.create()
             yield _sse("status", {"message": "Agent initialized. Thinking..."})
 
             # Run the agent. `agent.run` in OpenManus returns the final result string
             # (or None) and writes intermediate reasoning to the loguru logger.
             result = await asyncio.wait_for(
-                agent.run(prompt), timeout=REQUEST_TIMEOUT_S
+                agent.run(agent_prompt), timeout=REQUEST_TIMEOUT_S
             )
 
         elapsed = round(time.time() - started, 2)
@@ -250,6 +355,10 @@ async def get_config(
             "model": os.getenv("OPENMANUS_MODEL", "configured-in-toml"),
             "max_prompt_length": MAX_PROMPT_LEN,
             "request_timeout_s": REQUEST_TIMEOUT_S,
+            "attachments": {
+                "text": True,
+                "image": _has_vision_config(),
+            },
         }
     )
 
@@ -265,11 +374,11 @@ async def chat(
 
     session_id = req.session_id or str(uuid.uuid4())
     prompt = req.prompt.strip()
-    if not prompt:
+    if not prompt and not req.attachments:
         raise HTTPException(status_code=400, detail="Empty prompt.")
 
     return StreamingResponse(
-        _run_agent_streaming(prompt, session_id),
+        _run_agent_streaming(prompt, session_id, req.attachments),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
