@@ -20,8 +20,14 @@ MODEL="${OPENMANUS_MODEL:-auto:free}"
 BASE_URL="${OPENMANUS_BASE_URL:-https://bazaarlink.ai/api/v1}"
 API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY:-YOUR_API_KEY}}"
 
-# Vision defaults: explicit VISION_* wins; otherwise inherit main LLM config.
-VISION_MODEL="${VISION_MODEL:-${OPENMANUS_MODEL:-$MODEL}}"
+# Vision defaults: explicit VISION_* wins. If the main text model is `auto:free`
+# we switch image understanding to a concrete multimodal model because BazaarLink
+# disables vision on auto:free.
+DEFAULT_VISION_MODEL="${OPENMANUS_MODEL:-$MODEL}"
+if [ "$DEFAULT_VISION_MODEL" = "auto:free" ]; then
+    DEFAULT_VISION_MODEL="z-ai/glm-5v-turbo"
+fi
+VISION_MODEL="${VISION_MODEL:-$DEFAULT_VISION_MODEL}"
 VISION_BASE_URL="${VISION_BASE_URL:-${OPENMANUS_BASE_URL:-$BASE_URL}}"
 VISION_API_KEY="${VISION_API_KEY:-${OPENAI_API_KEY:-${OPENROUTER_API_KEY:-$API_KEY}}}"
 export VISION_MODEL VISION_BASE_URL VISION_API_KEY

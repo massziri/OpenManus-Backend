@@ -33,6 +33,12 @@ services:
         value: "https://bazaarlink.ai/api/v1"
       - key: OPENMANUS_MODEL
         value: "auto:free"
+      - key: VISION_BASE_URL
+        value: "https://bazaarlink.ai/api/v1"
+      - key: VISION_MODEL
+        value: "z-ai/glm-5v-turbo"
+      - key: VISION_API_KEY
+        sync: false
       - key: REQUEST_TIMEOUT_S
         value: "600"
       - key: MAX_PROMPT_LEN
