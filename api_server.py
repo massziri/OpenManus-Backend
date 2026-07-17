@@ -231,6 +231,22 @@ async def _run_agent_streaming(prompt: str, session_id: str, attachments: List[A
                 _vision_describe(effective_prompt, image_urls),
                 timeout=min(90, REQUEST_TIMEOUT_S),
             )
+        elif attachments and not image_urls:
+            yield _sse("status", {"message": "Analyzing attached text file..."})
+            llm = LLM()
+            result = await asyncio.wait_for(
+                llm.ask(
+                    messages=[{"role": "user", "content": effective_prompt}],
+                    system_msgs=[
+                        {
+                            "role": "system",
+                            "content": "You are OpenManus. Analyze the attached text content directly and answer in the user's language. Do not ask for a path unless the user explicitly requests filesystem actions.",
+                        }
+                    ],
+                    stream=False,
+                ),
+                timeout=min(90, REQUEST_TIMEOUT_S),
+            )
         elif not _needs_full_agent(prompt):
             yield _sse("status", {"message": "Direct answer mode..."})
             llm = LLM()
