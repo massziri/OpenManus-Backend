@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app.agent.manus import Manus
+from app.llm import LLM
 from app.logger import logger
 
 # --------------------------------------------------------------------------- #
@@ -87,6 +88,42 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
+def _needs_full_agent(prompt: str) -> bool:
+    """Use the full tool-enabled agent only when the request appears to need tools."""
+    lowered = prompt.lower()
+    markers = (
+        "http://",
+        "https://",
+        "www.",
+        "browser",
+        "navig",
+        "ouvre",
+        "open ",
+        "site",
+        "website",
+        "url",
+        "click",
+        "search",
+        "recherche",
+        "web",
+        "scrape",
+        "screenshot",
+        "capture",
+        "fichier",
+        "file",
+        "python",
+        "code",
+        "terminal",
+        "bash",
+        "csv",
+        "excel",
+        "pdf",
+        "image jointe",
+        "pièce jointe",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 async def _run_agent_streaming(prompt: str, session_id: str) -> AsyncGenerator[bytes, None]:
     """
     Runs the OpenManus agent for a given prompt and yields SSE-formatted chunks.
@@ -101,14 +138,31 @@ async def _run_agent_streaming(prompt: str, session_id: str) -> AsyncGenerator[b
 
     agent = None
     try:
-        agent = await Manus.create()
-        yield _sse("status", {"message": "Agent initialized. Thinking..."})
+        if not _needs_full_agent(prompt):
+            yield _sse("status", {"message": "Direct answer mode..."})
+            llm = LLM()
+            result = await asyncio.wait_for(
+                llm.ask(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_msgs=[
+                        {
+                            "role": "system",
+                            "content": "You are OpenManus. Answer directly, briefly, and in the user's language. Use tools only when explicitly necessary.",
+                        }
+                    ],
+                    stream=False,
+                ),
+                timeout=min(90, REQUEST_TIMEOUT_S),
+            )
+        else:
+            agent = await Manus.create()
+            yield _sse("status", {"message": "Agent initialized. Thinking..."})
 
-        # Run the agent. `agent.run` in OpenManus returns the final result string
-        # (or None) and writes intermediate reasoning to the loguru logger.
-        result = await asyncio.wait_for(
-            agent.run(prompt), timeout=REQUEST_TIMEOUT_S
-        )
+            # Run the agent. `agent.run` in OpenManus returns the final result string
+            # (or None) and writes intermediate reasoning to the loguru logger.
+            result = await asyncio.wait_for(
+                agent.run(prompt), timeout=REQUEST_TIMEOUT_S
+            )
 
         elapsed = round(time.time() - started, 2)
         yield _sse(
